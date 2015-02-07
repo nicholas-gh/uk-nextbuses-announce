@@ -15,11 +15,18 @@ import logging
 from multiprocessing.pool import ThreadPool
 from threading import Thread
 from Queue import Queue
+from optparse import OptionParser
 from evdev import InputDevice, categorize, ecodes, list_devices
 
+parser = OptionParser()
+parser.add_option("-c", "--config", dest="configfilename",
+                  default="nextbuses.ini",
+                  help="Reading configuration from FILE", metavar="FILE")
 
-if not os.path.exists("nextbuses.ini"):
-    open("nextbuses.ini", 'w').write("""
+(options, args) = parser.parse_args()
+
+if not os.path.exists(options.configfilename):
+    open(options.configfilename, 'w').write("""
 [credentials]
 user = TravelineAPIxxx
 pass = xxxx
@@ -166,7 +173,7 @@ def say_bus_details(config, log):
     sound_queue.put(None)
 
 config = ConfigParser.ConfigParser()
-config.read("nextbuses.ini")
+config.read(options.configfilename)
 
 logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger()
