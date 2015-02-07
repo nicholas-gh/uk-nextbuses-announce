@@ -30,6 +30,7 @@ url = xxxx
 [input]
 device = Yubico Yubico Yubikey II
 key = KEY_ENTER
+sleep = 10
 
 [audio]
 volume = 100
@@ -173,8 +174,9 @@ log = logging.getLogger()
 while True:
     dev = find_input_device(log)
     if not dev:
-        log.debug("Didn't find input device, sleeping for 10 seconds")
-        time.sleep(10)
+        sleep = config.getint('input', 'sleep')
+        log.debug("Didn't find input device, sleeping for %d seconds", sleep)
+        time.sleep(sleep)
         continue
 
     alsaaudio.Mixer(config.get('audio','control'),
