@@ -6,6 +6,7 @@ bus stop to head to from your house, and speaks this information.
 Requires
 
  pip install gTTS
- pip install arrow
- pip install requests
 
+ pip install arrow
+
+ apt-get install python-alsaaudio python-requests python-lxml

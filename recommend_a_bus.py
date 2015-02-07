@@ -9,6 +9,7 @@ import os
 import requests
 import sys
 import tempfile
+import alsaaudio
 
 if not os.path.exists("nextbuses.ini"):
     open("nextbuses.ini", 'w').write("""
@@ -18,6 +19,11 @@ pass = xxxx
 
 [api]
 url = xxxx
+
+[audio]
+volume = 100
+control = PCM
+id = 0
 
 [distance]
 # minutes walk from your house
@@ -106,6 +112,8 @@ except Exception, e:
 tts = gTTS(text=info, lang='en')
 fhandle, fname = tempfile.mkstemp(suffix="mp3")
 tts.save(fname)
+alsaaudio.Mixer(config.get('audio','control'),
+                int(config.get('audio','id'))).setvolume(int(config.get('audio','volume')))
 mpg123(fname)
 os.unlink(fname)
 
