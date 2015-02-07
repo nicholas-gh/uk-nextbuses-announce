@@ -12,6 +12,7 @@ import tempfile
 import alsaaudio
 import time
 import logging
+from multiprocessing.pool import ThreadPool
 from evdev import InputDevice, categorize, ecodes, list_devices
 
 
@@ -53,50 +54,60 @@ Airport Terminal 5 = airport
     sys.exit(2)
     
 
-def recommended_buses(config, log):
+def _query_stop(args):
+    stop, config, log = args
     buses = []
     request_timestamp = str(arrow.utcnow())
 
-    for stop in config.options('stops'):
-        siri =  lxml.etree.Element("{http://www.siri.org.uk/}Siri")
-        siri.attrib['version'] = "1.0"
-        sr = lxml.etree.SubElement(siri, "{http://www.siri.org.uk/}ServiceRequest")
-        lxml.etree.SubElement(sr, "{http://www.siri.org.uk/}RequestTimestamp").text = request_timestamp
-        lxml.etree.SubElement(sr, "{http://www.siri.org.uk/}RequestorRef").text = config.get('credentials','user')
-        monitoringrequest = lxml.etree.SubElement(sr, "{http://www.siri.org.uk/}StopMonitoringRequest")
-        monitoringrequest.attrib['version'] = "1.0"
-        lxml.etree.SubElement(monitoringrequest, "{http://www.siri.org.uk/}RequestTimestamp").text = request_timestamp
-        lxml.etree.SubElement(monitoringrequest, "{http://www.siri.org.uk/}MonitoringRef").text = stop
-        lxml.etree.SubElement(monitoringrequest, "{http://www.siri.org.uk/}MessageIdentifier").text = stop
+    siri =  lxml.etree.Element("{http://www.siri.org.uk/}Siri")
+    siri.attrib['version'] = "1.0"
+    sr = lxml.etree.SubElement(siri, "{http://www.siri.org.uk/}ServiceRequest")
+    lxml.etree.SubElement(sr, "{http://www.siri.org.uk/}RequestTimestamp").text = request_timestamp
+    lxml.etree.SubElement(sr, "{http://www.siri.org.uk/}RequestorRef").text = config.get('credentials','user')
+    monitoringrequest = lxml.etree.SubElement(sr, "{http://www.siri.org.uk/}StopMonitoringRequest")
+    monitoringrequest.attrib['version'] = "1.0"
+    lxml.etree.SubElement(monitoringrequest, "{http://www.siri.org.uk/}RequestTimestamp").text = request_timestamp
+    lxml.etree.SubElement(monitoringrequest, "{http://www.siri.org.uk/}MonitoringRef").text = stop
+    lxml.etree.SubElement(monitoringrequest, "{http://www.siri.org.uk/}MessageIdentifier").text = stop
 
-        payload = lxml.etree.tostring(siri, encoding="UTF-8", xml_declaration=True, method='xml', pretty_print=True)
+    payload = lxml.etree.tostring(siri, encoding="UTF-8", xml_declaration=True, method='xml', pretty_print=True)
 
-        log.debug("Sending query for stop %s", stop)
-        response = requests.post(config.get('api','url'),
-                                data=payload,
-                                headers={'Content-Type': 'application/xml'},
-                                auth=(config.get('credentials','user'),
-                                      config.get('credentials','pass')))
-        log.debug("Got reply")
-        siri = lxml.etree.fromstring(response.content)
+    log.debug("Sending query for stop %s", stop)
+    response = requests.post(config.get('api','url'),
+                            data=payload,
+                            headers={'Content-Type': 'application/xml', 'content-encoding': 'gzip'},
+                            auth=(config.get('credentials','user'),
+                                  config.get('credentials','pass')))
+    log.debug("Got reply")
+    siri = lxml.etree.fromstring(response.content)
 
-        for visit in siri.findall(".//{http://www.siri.org.uk/}MonitoredStopVisit"):
-            bus = visit.find(".//{http://www.siri.org.uk/}PublishedLineName").text
-            direction = visit.find(".//{http://www.siri.org.uk/}DirectionName").text
-            try:
-                accuracy = "expected"
-                arrival = arrow.get(visit.find(".//{http://www.siri.org.uk/}ExpectedDepartureTime").text)
-            except AttributeError:
-                accuracy = "scheduled"
-                arrival = arrow.get(visit.find(".//{http://www.siri.org.uk/}AimedDepartureTime").text)
+    visits = siri.findall(".//{http://www.siri.org.uk/}MonitoredStopVisit")
+    log.debug("Found %d MonitoredStopVisit", len(visits))
+    for visit in visits:
+        bus = visit.find(".//{http://www.siri.org.uk/}PublishedLineName").text
+        direction = visit.find(".//{http://www.siri.org.uk/}DirectionName").text
+        try:
+            accuracy = "expected"
+            arrival = arrow.get(visit.find(".//{http://www.siri.org.uk/}ExpectedDepartureTime").text)
+        except AttributeError:
+            accuracy = "scheduled"
+            arrival = arrow.get(visit.find(".//{http://www.siri.org.uk/}AimedDepartureTime").text)
 
-            if direction.lower() in config.options('directions'):
-                buses.append((arrival, dict(arrival=arrival,
-                                            bus=bus,
-                                            stop=config.get('stops', stop),
-                                            direction=direction,
-                                            accuracy=accuracy)))
+        if direction.lower() in config.options('directions'):
+            buses.append((arrival, dict(arrival=arrival,
+                                        bus=bus,
+                                        stop=config.get('stops', stop),
+                                        direction=direction,
+                                        accuracy=accuracy)))
+    return buses
 
+def recommended_buses(config, log):
+    buses = []
+    queue = [(stop, config, log) for stop in config.options('stops')]
+    pool = ThreadPool(len(queue))
+    for result in pool.map(_query_stop, queue):
+        buses.extend(result)
+        
     queued = []
     for arrival, detail in sorted(buses):
         if len(queued) >= 2:
@@ -116,22 +127,27 @@ def find_input_device(log):
 def say_bus_details(config, log):
     try:
         queued = recommended_buses(config, log)
-        info = "Next bus %s. It is the %s which is %s %s from %s. The one after is the number %s which is %s %s from %s." % (
-            queued[0]['arrival'].humanize(arrow.utcnow()),
-            queued[0]['bus'], queued[0]['accuracy'], queued[0]['arrival'].humanize(arrow.utcnow()), queued[0]['stop'],
-            queued[1]['bus'], queued[1]['accuracy'], queued[1]['arrival'].humanize(arrow.utcnow()), queued[1]['stop'])
+        info = ["Next bus %s." % queued[0]['arrival'].humanize(arrow.utcnow()),
+                "It is the %s which is %s %s from %s." % (queued[0]['bus'],
+                                                          queued[0]['accuracy'],
+                                                          queued[0]['arrival'].humanize(arrow.utcnow()),
+                                                          queued[0]['stop']),
+                "A later bus is the number %s which is %s %s from %s." % (queued[1]['bus'],
+                                                                          queued[1]['accuracy'],
+                                                                          queued[1]['arrival'].humanize(arrow.utcnow()),
+                                                                          queued[0]['stop'])]
+
     except Exception, e:
         log.exception("Unhandled error")
-        info = "We had an error. %s"  % e
+        info = ["We had an error. %s"  % e]
 
-    tts = gTTS(text=info, lang='en')
-    fhandle, fname = tempfile.mkstemp(suffix="mp3")
-    tts.save(fname)
-    alsaaudio.Mixer(config.get('audio','control'),
-                    int(config.get('audio','id'))).setvolume(int(config.get('audio','volume')))
-    mpg123(fname)
-    os.unlink(fname)
-
+    for block in info:
+        # want to start talking as soon as we can, not waiting for mp3 of entire sentence
+        tts = gTTS(text=block, lang='en')
+        fhandle, fname = tempfile.mkstemp(suffix="mp3")
+        tts.save(fname)
+        mpg123(fname) # todo - threading so we can download later mp3 blocks while we're still talking
+        os.unlink(fname)
 
 config = ConfigParser.ConfigParser()
 config.read("nextbuses.ini")
@@ -146,6 +162,9 @@ while True:
         time.sleep(10)
         continue
 
+    alsaaudio.Mixer(config.get('audio','control'),
+                    int(config.get('audio','id'))).setvolume(int(config.get('audio','volume')))
+        
     dev.grab()
     for event in dev.read_loop():
         if event.type == ecodes.EV_KEY:
