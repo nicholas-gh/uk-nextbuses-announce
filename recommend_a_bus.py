@@ -156,11 +156,15 @@ def say_bus_details(config, log, options):
         if queued is None:
             return
         info = ["Next bus %s." % queued[0]['arrival'].humanize(arrow.utcnow()),
-                "It is the %s which is %s %s from %s." % (queued[0]['bus'],
-                                                          queued[0]['accuracy'],
-                                                          queued[0]['arrival'].humanize(arrow.utcnow()),
-                                                          queued[0]['stop']),
-                "A later bus is the number %s which is %s %s from %s." % (queued[1]['bus'],
+                "It is number %s, %s %s from %s." % (queued[0]['bus'],
+                                                     queued[0]['accuracy'],
+                                                     queued[0]['arrival'].humanize(arrow.utcnow()),
+                                                     queued[0]['stop'])]
+        if (queued[0]['bus'], queued[0]['stop']) == (queued[1]['bus'], queued[1]['stop']):
+            info.append("and then %s %s." % (queued[1]['accuracy'],
+                                             queued[1]['arrival'].humanize(arrow.utcnow())))
+        else:
+            info.append("A later bus is the number %s, %s %s from %s." % (queued[1]['bus'],
                                                                           queued[1]['accuracy'],
                                                                           queued[1]['arrival'].humanize(arrow.utcnow()),
                                                                           queued[0]['stop'])]
