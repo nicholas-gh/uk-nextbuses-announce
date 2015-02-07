@@ -115,7 +115,7 @@ def recommended_buses(config, log):
     for arrival, detail in sorted(buses):
         if len(queued) >= 2:
             break
-        if arrow.utcnow().replace(minutes=int(config.get('distance', detail['stop']))) < arrival:
+        if arrow.utcnow().replace(minutes=config.getint('distance', detail['stop'])) < arrival:
             queued.append(detail)
     return queued
             
@@ -180,7 +180,7 @@ while True:
         continue
 
     alsaaudio.Mixer(config.get('audio','control'),
-                    int(config.get('audio','id'))).setvolume(int(config.get('audio','volume')))
+                    config.getint('audio','id')).setvolume(config.getint('audio','volume'))
         
     dev.grab()
     try:
