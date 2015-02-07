@@ -181,11 +181,16 @@ while True:
                     int(config.get('audio','id'))).setvolume(int(config.get('audio','volume')))
         
     dev.grab()
-    for event in dev.read_loop():
-        if event.type == ecodes.EV_KEY:
-            if event.value == 0:
-                if ecodes.keys[event.code] == config.get('input', 'key'):
-                    log.info("Woken up")
-                    aplay(config.get('audio', 'intro'), _bg=True)
-                    log.info("Getting busses")
-                    say_bus_details(config, log)
+    try:
+        for event in dev.read_loop():
+            if event.type == ecodes.EV_KEY:
+                if event.value == 0:
+                    if ecodes.keys[event.code] == config.get('input', 'key'):
+                        log.info("Woken up")
+                        aplay(config.get('audio', 'intro'), _bg=True)
+                        log.info("Getting busses")
+                        say_bus_details(config, log)
+    except IOError, e:
+        if e.errno == 19:
+            logging.debug("input device has gone.")
+            continue
