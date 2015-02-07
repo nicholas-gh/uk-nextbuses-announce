@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
 from gtts import gTTS
-from sh import mpg123
+from sh import mpg123, mplayer
 import ConfigParser
 import arrow
 import lxml.etree
@@ -10,6 +10,10 @@ import requests
 import sys
 import tempfile
 import alsaaudio
+import time
+import logging
+from evdev import InputDevice, categorize, ecodes, list_devices
+
 
 if not os.path.exists("nextbuses.ini"):
     open("nextbuses.ini", 'w').write("""
@@ -20,10 +24,15 @@ pass = xxxx
 [api]
 url = xxxx
 
+[input]
+device = Yubico Yubico Yubikey II
+key = KEY_ENTER
+
 [audio]
 volume = 100
 control = PCM
 id = 0
+intro = 263123__pan14__sine-tri-tone-down-negative-beep-amb-verb.wav
 
 [distance]
 # minutes walk from your house
@@ -44,7 +53,7 @@ Airport Terminal 5 = airport
     sys.exit(2)
     
 
-def recommended_buses(config):
+def recommended_buses(config, log):
     buses = []
     request_timestamp = str(arrow.utcnow())
 
@@ -62,11 +71,13 @@ def recommended_buses(config):
 
         payload = lxml.etree.tostring(siri, encoding="UTF-8", xml_declaration=True, method='xml', pretty_print=True)
 
+        log.debug("Sending query for stop %s", stop)
         response = requests.post(config.get('api','url'),
                                 data=payload,
                                 headers={'Content-Type': 'application/xml'},
                                 auth=(config.get('credentials','user'),
                                       config.get('credentials','pass')))
+        log.debug("Got reply")
         siri = lxml.etree.fromstring(response.content)
 
         for visit in siri.findall(".//{http://www.siri.org.uk/}MonitoredStopVisit"):
@@ -94,26 +105,53 @@ def recommended_buses(config):
             queued.append(detail)
     return queued
             
+def find_input_device(log):
+    devices = [InputDevice(fn) for fn in list_devices()]
+    for dev in devices:
+        log.info("Found %s", dev)
+        if dev.name == config.get('input', 'device'):
+            log.info("Using %s", dev)
+            return dev
+
+def say_bus_details(config, log):
+    try:
+        queued = recommended_buses(config, log)
+        info = "Next bus %s. It is the %s which is %s %s from %s. The one after is the number %s which is %s %s from %s." % (
+            queued[0]['arrival'].humanize(arrow.utcnow()),
+            queued[0]['bus'], queued[0]['accuracy'], queued[0]['arrival'].humanize(arrow.utcnow()), queued[0]['stop'],
+            queued[1]['bus'], queued[1]['accuracy'], queued[1]['arrival'].humanize(arrow.utcnow()), queued[1]['stop'])
+    except Exception, e:
+        log.exception("Unhandled error")
+        info = "We had an error. %s"  % e
+
+    tts = gTTS(text=info, lang='en')
+    fhandle, fname = tempfile.mkstemp(suffix="mp3")
+    tts.save(fname)
+    alsaaudio.Mixer(config.get('audio','control'),
+                    int(config.get('audio','id'))).setvolume(int(config.get('audio','volume')))
+    mpg123(fname)
+    os.unlink(fname)
+
+
 config = ConfigParser.ConfigParser()
 config.read("nextbuses.ini")
 
-try:
-    queued = recommended_buses(config)
-    info = "Next bus %s. It is the %s which is %s %s from %s. The one after is the number %s which is %s %s from %s." % (
-        queued[0]['arrival'].humanize(arrow.utcnow()),
-        queued[0]['bus'], queued[0]['accuracy'], queued[0]['arrival'].humanize(arrow.utcnow()), queued[0]['stop'],
-        queued[1]['bus'], queued[1]['accuracy'], queued[1]['arrival'].humanize(arrow.utcnow()), queued[1]['stop'])
-except Exception, e:
-    import traceback
-    print e
-    traceback.print_exc()
-    info = "We had an error. %s"  % e
-        
-tts = gTTS(text=info, lang='en')
-fhandle, fname = tempfile.mkstemp(suffix="mp3")
-tts.save(fname)
-alsaaudio.Mixer(config.get('audio','control'),
-                int(config.get('audio','id'))).setvolume(int(config.get('audio','volume')))
-mpg123(fname)
-os.unlink(fname)
+logging.basicConfig(level=logging.DEBUG)
+log = logging.getLogger()
+    
+while True:
+    dev = find_input_device(log)
+    if not dev:
+        log.debug("Didn't find input device, sleeping for 10 seconds")
+        time.sleep(10)
+        continue
 
+    dev.grab()
+    for event in dev.read_loop():
+        if event.type == ecodes.EV_KEY:
+            if event.value == 0:
+                if ecodes.keys[event.code] == config.get('input', 'key'):
+                    log.info("Woken up")
+                    mplayer(config.get('audio', 'intro'), _bg=True)
+                    log.info("Getting busses")
+                    say_bus_details(config, log)

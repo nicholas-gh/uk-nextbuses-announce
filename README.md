@@ -10,3 +10,5 @@ Requires
  pip install arrow
 
  apt-get install python-alsaaudio python-requests python-lxml
+
+Sound is from https://www.freesound.org/people/pan14/sounds/263123/
