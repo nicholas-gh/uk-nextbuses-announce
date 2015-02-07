@@ -38,6 +38,7 @@ url = xxxx
 device = Yubico Yubico Yubikey II
 key = KEY_ENTER
 sleep = 10
+announce_on_connect = true
 
 [audio]
 volume = 100
@@ -177,14 +178,20 @@ config.read(options.configfilename)
 
 logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger()
-    
+
+first_search = True
 while True:
     dev = find_input_device(log)
     if not dev:
         sleep = config.getint('input', 'sleep')
         log.debug("Didn't find input device, sleeping for %d seconds", sleep)
         time.sleep(sleep)
+        first_search = False
         continue
+    if first_search == False and config.getboolean('input', 'announce_on_connect'):
+        aplay(config.get('audio', 'intro'), _bg=True)
+        log.info("Getting buses")
+        say_bus_details(config, log)
 
     alsaaudio.Mixer(config.get('audio','control'),
                     config.getint('audio','id')).setvolume(config.getint('audio','volume'))
@@ -197,7 +204,7 @@ while True:
                     if ecodes.keys[event.code] == config.get('input', 'key'):
                         log.info("Woken up")
                         aplay(config.get('audio', 'intro'), _bg=True)
-                        log.info("Getting busses")
+                        log.info("Getting buses")
                         say_bus_details(config, log)
     except IOError, e:
         if e.errno == 19:
