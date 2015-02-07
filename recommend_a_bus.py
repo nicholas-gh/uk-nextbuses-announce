@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
 from gtts import gTTS
-from sh import mpg123, mplayer
+from sh import mpg123, aplay
 import ConfigParser
 import arrow
 import lxml.etree
@@ -171,6 +171,6 @@ while True:
             if event.value == 0:
                 if ecodes.keys[event.code] == config.get('input', 'key'):
                     log.info("Woken up")
-                    mplayer(config.get('audio', 'intro'), _bg=True)
+                    aplay(config.get('audio', 'intro'), _bg=True)
                     log.info("Getting busses")
                     say_bus_details(config, log)
