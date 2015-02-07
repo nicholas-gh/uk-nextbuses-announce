@@ -13,6 +13,8 @@ import alsaaudio
 import time
 import logging
 from multiprocessing.pool import ThreadPool
+from threading import Thread
+from Queue import Queue
 from evdev import InputDevice, categorize, ecodes, list_devices
 
 
@@ -141,13 +143,26 @@ def say_bus_details(config, log):
         log.exception("Unhandled error")
         info = ["We had an error. %s"  % e]
 
+    sound_queue = Queue()
+
+    def sound_worker(queue):
+        while True:
+            fname = queue.get(block=True)
+            if fname is None:
+                return
+            mpg123(fname)
+            os.unlink(fname)
+
+    worker = Thread(target=sound_worker, args=(sound_queue,))
+    worker.start()
+        
     for block in info:
         # want to start talking as soon as we can, not waiting for mp3 of entire sentence
         tts = gTTS(text=block, lang='en')
         fhandle, fname = tempfile.mkstemp(suffix="mp3")
         tts.save(fname)
-        mpg123(fname) # todo - threading so we can download later mp3 blocks while we're still talking
-        os.unlink(fname)
+        sound_queue.put(fname)
+    sound_queue.put(None)
 
 config = ConfigParser.ConfigParser()
 config.read("nextbuses.ini")
