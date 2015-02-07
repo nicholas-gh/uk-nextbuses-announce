@@ -150,7 +150,11 @@ def find_input_device(log):
             log.info("Using %s", dev)
             return dev
 
+sound_queue = Queue()
+
 def say_bus_details(config, log, options):
+    global sound_queue
+    
     try:
         queued = recommended_buses(config, log, options)
         if queued is None:
@@ -167,13 +171,11 @@ def say_bus_details(config, log, options):
             info.append("A later bus is the number %s, %s %s from %s." % (queued[1]['bus'],
                                                                           queued[1]['accuracy'],
                                                                           queued[1]['arrival'].humanize(arrow.utcnow()),
-                                                                          queued[0]['stop'])]
+                                                                          queued[1]['stop']))
 
     except Exception, e:
         log.exception("Unhandled error")
         info = ["We had an error. %s"  % e]
-
-    sound_queue = Queue()
 
     def sound_worker(queue):
         while True:
@@ -229,6 +231,10 @@ while True:
             if event.type == ecodes.EV_KEY:
                 if event.value == 0:
                     if ecodes.keys[event.code] == config.get('input', 'key'):
+                        if sound_queue.qsize() > 0:
+                            # don't talk over ourselves
+                            log.debug("Still talking...")
+                            continue
                         log.info("Woken up")
                         aplay(config.get('audio', 'intro'), _bg=True)
                         log.info("Getting buses")
