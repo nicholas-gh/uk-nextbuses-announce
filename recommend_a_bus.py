@@ -23,6 +23,11 @@ parser.add_option("-c", "--config", dest="configfilename",
                   default="nextbuses.ini",
                   help="Reading configuration from FILE", metavar="FILE")
 
+parser.add_option("-d", "--directions", dest="directions",
+                  default=False,
+                  action="store_true",
+                  help="Print discovered directions")
+
 (options, args) = parser.parse_args()
 
 if not os.path.exists(options.configfilename):
@@ -66,7 +71,7 @@ Airport Terminal 5 = airport
     
 
 def _query_stop(args):
-    stop, config, log = args
+    stop, config, log, options = args
     buses = []
     request_timestamp = str(arrow.utcnow())
 
@@ -104,29 +109,39 @@ def _query_stop(args):
             accuracy = "scheduled"
             arrival = arrow.get(visit.find(".//{http://www.siri.org.uk/}AimedDepartureTime").text)
 
-        if direction.lower() in config.options('directions'):
+        if options.directions or direction.lower() in config.options('directions'):
             buses.append((arrival, dict(arrival=arrival,
                                         bus=bus,
                                         stop=config.get('stops', stop),
                                         direction=direction,
                                         accuracy=accuracy)))
+            
     return buses
 
-def recommended_buses(config, log):
-    buses = []
-    queue = [(stop, config, log) for stop in config.options('stops')]
-    pool = ThreadPool(len(queue))
-    for result in pool.map(_query_stop, queue):
-        buses.extend(result)
-        
+def recommended_buses(config, log, options):
     queued = []
-    for arrival, detail in sorted(buses):
+    for arrival, detail in sorted(all_buses(config, log, options)):
         if len(queued) >= 2:
             break
         if arrow.utcnow().replace(minutes=config.getint('distance', detail['stop'])) < arrival:
             queued.append(detail)
     return queued
-            
+
+def all_buses(config, log, options):
+    buses = []
+    queue = [(stop, config, log, options) for stop in config.options('stops')]
+    pool = ThreadPool(len(queue))
+    for result in pool.map(_query_stop, queue):
+        buses.extend(result)
+    return buses
+
+def bus_directions(config, log, options):
+    directions = set()
+    for arrival, detail in sorted(all_buses(config, log, options)):
+        directions.add(detail['direction'])
+    for direction in directions:
+        yield direction
+
 def find_input_device(log):
     devices = [InputDevice(fn) for fn in list_devices()]
     for dev in devices:
@@ -135,9 +150,11 @@ def find_input_device(log):
             log.info("Using %s", dev)
             return dev
 
-def say_bus_details(config, log):
+def say_bus_details(config, log, options):
     try:
-        queued = recommended_buses(config, log)
+        queued = recommended_buses(config, log, options)
+        if queued is None:
+            return
         info = ["Next bus %s." % queued[0]['arrival'].humanize(arrow.utcnow()),
                 "It is the %s which is %s %s from %s." % (queued[0]['bus'],
                                                           queued[0]['accuracy'],
@@ -179,6 +196,12 @@ config.read(options.configfilename)
 logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger()
 
+if options.directions:
+    print "Discovered bus directions from configured stops:"
+    for direction in bus_directions(config, log, options):
+        print direction
+    sys.exit(2)
+
 first_search = True
 while True:
     dev = find_input_device(log)
@@ -191,7 +214,7 @@ while True:
     if first_search == False and config.getboolean('input', 'announce_on_connect'):
         aplay(config.get('audio', 'intro'), _bg=True)
         log.info("Getting buses")
-        say_bus_details(config, log)
+        say_bus_details(config, log, options)
 
     alsaaudio.Mixer(config.get('audio','control'),
                     config.getint('audio','id')).setvolume(config.getint('audio','volume'))
@@ -205,7 +228,7 @@ while True:
                         log.info("Woken up")
                         aplay(config.get('audio', 'intro'), _bg=True)
                         log.info("Getting buses")
-                        say_bus_details(config, log)
+                        say_bus_details(config, log, options)
     except IOError, e:
         if e.errno == 19:
             logging.debug("input device has gone.")
