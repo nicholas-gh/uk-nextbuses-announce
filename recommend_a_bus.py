@@ -2,6 +2,7 @@
 
 from gtts import gTTS
 from sh import mpg123, aplay
+import sh
 import ConfigParser
 import arrow
 import lxml.etree
@@ -221,18 +222,30 @@ while True:
         continue
     if first_search == False and config.getboolean('input', 'announce_on_connect'):
         aplay(config.get('audio', 'intro'), _bg=True)
-        log.info("Getting buses")
-        say_bus_details(config, log, options)
+        #log.info("Getting buses")
+        #say_bus_details(config, log, options)
 
     alsaaudio.Mixer(config.get('audio','control'),
                     config.getint('audio','id')).setvolume(config.getint('audio','volume'))
         
     dev.grab()
+    hue = sh.Command("/home/pi/huepl.pl")
+    hue = hue.bake("-keyf=/home/pi/.hueplkey")
+    youtube = sh.Command("curl")
+    youtube = youtube.bake("-H","Content-Type: application/json","http://CHROMECAST.lan:8008/apps/YouTube", "-X","POST","-d")
     try:
         for event in dev.read_loop():
             if event.type == ecodes.EV_KEY:
                 if event.value == 0:
-                    if ecodes.keys[event.code] == config.get('input', 'key'):
+                    if ecodes.keys[event.code] == "KEY_PLAYPAUSE":
+                     youtube("v=3MLQqGTqPDM")
+                     hue('for', '2', '3', 'do', 'on')
+                     hue('for', '2', '3', 'do', 'blue')
+                    if ecodes.keys[event.code] == "KEY_VOLUMEUP":
+                     hue('for', '2', '3', 'do', 'on')
+                    elif ecodes.keys[event.code] == "KEY_VOLUMEDOWN":
+                     hue('for', '2', '3', 'do', 'off')
+                    elif ecodes.keys[event.code] == config.get('input', 'key'):
                         if sound_queue.qsize() > 0:
                             # don't talk over ourselves
                             log.debug("Still talking...")
